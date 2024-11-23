@@ -1,9 +1,7 @@
 from flask_restful import Resource, reqparse
 from models.hotel import HotelModel
-from sql_alchemy import banco
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required
 import sqlite3
-
 
 def normalize_path_params(cidade=None,
                           estrelas_min = 0,
@@ -13,39 +11,35 @@ def normalize_path_params(cidade=None,
                           limit = 50,
                           offset = 0, **dados):
     if cidade:
-        return{
+        return {
             'estrelas_min': estrelas_min,
             'estrelas_max': estrelas_max,
             'diaria_min': diaria_min,
             'diaria_max': diaria_max,
             'cidade': cidade,
             'limit': limit,
-            'offset': offset
-        }
-    return{
-            'estrelas_min': estrelas_min,
-            'estrelas_max': estrelas_max,
-            'diaria_min': diaria_min,
-            'diaria_max': diaria_max,
-            'limit': limit,
-            'offset': offset
-        }
+            'offset': offset}
+    return {
+        'estrelas_min': estrelas_min,
+        'estrelas_max': estrelas_max,
+        'diaria_min': diaria_min,
+        'diaria_max': diaria_max,
+        'limit': limit,
+        'offset': offset}
 
-# path /hoteis?cidade=Rio de Janeiro&estrelas_min=4&diaria_max=400
 path_params = reqparse.RequestParser()
-path_params.add_argument('cidade', type=str)
-path_params.add_argument('estrelas_min', type=float)
-path_params.add_argument('estrelas_max', type=float)
-path_params.add_argument('diaria_min', type=float)
-path_params.add_argument('diaria_max', type=float)
-path_params.add_argument('limit', type=float)
-path_params.add_argument('offset', type=float)
+path_params.add_argument('cidade', type=str, location='args')
+path_params.add_argument('estrelas_min', type=float, location='args')
+path_params.add_argument('estrelas_max', type=float, location='args')
+path_params.add_argument('diaria_min', type=float, location='args')
+path_params.add_argument('diaria_max', type=float, location='args')
+path_params.add_argument('limit', type=int, location='args')
+path_params.add_argument('offset', type=int, location='args')
 
 class Hoteis(Resource):
     def get(self):
         connection = sqlite3.connect('banco.db')
         cursor = connection.cursor()
-        
 
         dados = path_params.parse_args()
         dados_validos = {chave:dados[chave] for chave in dados if dados[chave] is not None}
@@ -53,80 +47,77 @@ class Hoteis(Resource):
 
         if not parametros.get('cidade'):
             consulta = "SELECT * FROM hoteis \
-            WHERE (estrelas > ? and estrelas < ?) \
-            AND (diaria > ? and diaria < ?) \
-                LIMIT ? OFFSET ?"
+            WHERE (estrelas >= ? and estrelas <= ?) \
+            and (diaria >= ? and diaria <= ?) \
+            LIMIT ? OFFSET ?"
             tupla = tuple([parametros[chave] for chave in parametros])
             resultado = cursor.execute(consulta, tupla)
         else:
             consulta = "SELECT * FROM hoteis \
-            WHERE (estrelas > ? and estrelas < ?) \
-            AND (diaria > ? and diaria < ?) \
-            AND cidade = ? LIMIT ? OFFSET ?"
+            WHERE (estrelas >= ? and estrelas <= ?) \
+            and (diaria >= ? and diaria <= ?) \
+            and cidade = ? LIMIT ? OFFSET ?"
             tupla = tuple([parametros[chave] for chave in parametros])
             resultado = cursor.execute(consulta, tupla)
-        
+
+        print("###### Resultado ######")
+        print(resultado)
+        print("###### Resultado ######")
         hoteis = []
         for linha in resultado:
             hoteis.append({
-            'hotel_id': linha[0],
+            'hotel_id': linha[0] ,
             'nome': linha[1],
             'estrelas': linha[2],
             'diaria': linha[3],
             'cidade': linha[4]
             })
 
-        return {'hoteis': hoteis }
-
-    @jwt_required()
-    def post(self):
-        #if HotelModel.find_hotel(hotel_id):
-         #   return {"message": "Hotel id '{}' already exists.".format(hotel_id)}, 400 #bad request
-        dados = Hotel.atributos.parse_args()
-        hotel = HotelModel(**dados)
-        try:
-            hotel.save_hotel()
-        except:
-            return {"message": "An internal error ocurred trying to save hotel"}, 500 #internal server error
-        return hotel.json(), 201
-
+        return {'hoteis': hoteis} # SELECT * FROM hoteis
 
 class Hotel(Resource):
     atributos = reqparse.RequestParser()
-    atributos.add_argument('nome', type=str, required=True, help="The field 'nome' cannot be left blank")
-    atributos.add_argument('estrelas', type=float, required=True, help="The field 'estrelas' cannot be left blank")
+    atributos.add_argument('nome', type=str, required=True, help="The field 'nome' cannot be left blank.")
+    atributos.add_argument('estrelas')
     atributos.add_argument('diaria')
     atributos.add_argument('cidade')
 
     def get(self, hotel_id):
-        hotel = HotelModel.query.filter_by(hotel_id=hotel_id).first()
+        hotel = HotelModel.find_hotel(hotel_id)
         if hotel:
             return hotel.json()
-        return{'Message':'Sensor inexistente'},404
-    
+        return {'message': 'Hotel not found.'}, 404
+
     @jwt_required()
-    def put(self, hotel_id):
+    def post(self, hotel_id):
+        if HotelModel.find_hotel(hotel_id):
+            return {"message": "Hotel id '{}' already exists.".format(hotel_id)}, 400 #Bad Request
+
         dados = Hotel.atributos.parse_args()
-        hotel_encontrado = HotelModel.query.filter_by(hotel_id=hotel_id).first()
-        if hotel_encontrado:
-            hotel_encontrado.query.filter_by(hotel_id=hotel_id).update({**dados})
-            banco.session.commit()
-            return hotel_encontrado.json(), 200
-        hotel = HotelModel(**dados)
+        hotel = HotelModel(hotel_id, **dados)
         try:
             hotel.save_hotel()
         except:
-            return {"message": "An internal error ocurred trying to save hotel"}, 500 #internal server error
+            return {"message": "An error ocurred trying to create hotel."}, 500 #Internal Server Error
+        return hotel.json(), 201
+
+    @jwt_required()
+    def put(self, hotel_id):
+        dados = Hotel.atributos.parse_args()
+        hotel = HotelModel(hotel_id, **dados)
+
+        hotel_encontrado = HotelModel.find_hotel(hotel_id)
+        if hotel_encontrado:
+            hotel_encontrado.update_hotel(**dados)
+            hotel_encontrado.save_hotel()
+            return hotel_encontrado.json(), 200
+        hotel.save_hotel()
         return hotel.json(), 201
 
     @jwt_required()
     def delete(self, hotel_id):
-        hotel = HotelModel.query.filter_by(hotel_id=hotel_id).first()
+        hotel = HotelModel.find_hotel(hotel_id)
         if hotel:
-            try:
-                banco.session.delete(hotel)
-                banco.session.commit()
-                return{'message':'Hotel excluido!'}
-            except:
-                return {'message': 'An internal error ocurred trying to delete hotel'}, 500 #internal
-        return {'message': 'Hotel não encontrado.'}, 400
+            hotel.delete_hotel()
+            return {'message': 'Hotel deleted.'}
+        return {'message': 'Hotel not found.'}, 404
